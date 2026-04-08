@@ -70,25 +70,32 @@ while True:
         tz = pytz.timezone('Asia/Taipei')
         now = datetime.now(tz).strftime("%H:%M:%S")
         
-        # 總銷量異動
+        # A. 總銷量異動 (第一次啟動也記錄一筆初始總量)
         if current_total != st.session_state.last_val:
-            diff = current_total - st.session_state.last_val if st.session_state.last_val > 0 else 0
-            new_row = pd.DataFrame([{'時間': now, '最新總銷量': current_total, '變動': f"+{diff}"}])
+            diff = current_total - st.session_state.last_val if st.session_state.last_val > 0 else current_total
+            label = f"+{diff}" if st.session_state.last_val > 0 else f"初始 {diff}"
+            new_row = pd.DataFrame([{'時間': now, '最新總銷量': current_total, '變動': label}])
             st.session_state.history = pd.concat([new_row, st.session_state.history], ignore_index=True)
             st.session_state.last_val = current_total
 
-        # 個別成員銷量處理
+        # B. 個別成員銷量處理
         for m in members:
             name = m['成員名稱']
             current_sales = m['總銷售量']
             
+            # 關鍵修改：如果是第一次偵測到該成員
             if name not in st.session_state.member_last_sales:
                 st.session_state.member_last_sales[name] = current_sales
-                # 初始紀錄 (若目前已經有銷量，視為第一筆)
-                st.session_state.member_logs[name] = pd.DataFrame([
-                    {'時間': '初始', '張數': current_sales, '狀態': '目前銷量', '總銷售量': current_sales}
-                ]) if current_sales > 0 else pd.DataFrame(columns=['時間', '張數', '狀態', '總銷售量'])
-            
+                # 如果初始就有銷量，直接塞進 log 好讓排行榜抓得到
+                if current_sales > 0:
+                    st.session_state.member_logs[name] = pd.DataFrame([
+                        {'時間': f'啟動初始({now})', '張數': current_sales, '狀態': '初始數據', '總銷售量': current_sales}
+                    ])
+                else:
+                    st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '狀態', '總銷售量'])
+                continue # 初始完畢跳過本次循環
+
+            # 偵測後續變化
             last_sales = st.session_state.member_last_sales[name]
             if current_sales != last_sales:
                 diff_sales = current_sales - last_sales
@@ -110,14 +117,12 @@ while True:
             col1.metric("📊 全體累計總銷量", f"{current_total} 份")
             with col2:
                 st.write("### 👥 目前各成員統計")
-                # 這裡只顯示名稱與銷量，不顯示狀態
                 st.table(pd.DataFrame(members))
 
             st.divider()
             
             st.write("### 📄 個別應募紀錄與排行")
             m_names = [m['成員名稱'] for m in members]
-            # 建立對應的銷量數字供 Tab 顯示
             m_sales_map = {m['成員名稱']: m['總銷售量'] for m in members}
             
             tabs = st.tabs([f"{name} ({m_sales_map[name]}張)" for name in m_names])
@@ -127,9 +132,7 @@ while True:
                 current_m_total = m_sales_map[m_name]
                 
                 with tab:
-                    # 顯示該成員目前的累積總張數
                     st.metric(f"{m_name} 累計張數", f"{current_m_total} 張")
-                    
                     log_df = st.session_state.member_logs.get(m_name, pd.DataFrame())
                     
                     c_left, c_right = st.columns(2)
@@ -138,21 +141,21 @@ while True:
                         st.write("🕒 **單筆時間紀錄**")
                         if not log_df.empty:
                             display_log = log_df[['時間', '張數']].copy()
-                            display_log.columns = ['時間', '單筆訂單張數']
+                            display_log.columns = ['時間', '單筆張數']
                             st.dataframe(display_log, use_container_width=True, hide_index=True)
                         else:
                             st.info("尚無紀錄")
 
                     with c_right:
-                        st.write("🏆 **單筆訂單張數排行**")
+                        st.write("🏆 **單筆訂單排行榜**")
                         if not log_df.empty:
-                            # 篩選掉 0 或負數的異常數據進行排行
+                            # 這樣就會把「啟動初始」的那一筆也排進去
                             rank_df = log_df[log_df['張數'] > 0][['張數']].copy()
                             if not rank_df.empty:
                                 rank_df = rank_df.sort_values(by='張數', ascending=False).reset_index(drop=True)
                                 rank_df.index = rank_df.index + 1
                                 rank_df.index.name = '排名'
-                                rank_df.columns = ['單筆訂單張數']
+                                rank_df.columns = ['單筆張數']
                                 st.table(rank_df)
                             else:
                                 st.info("尚無購買數據")
