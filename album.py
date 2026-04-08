@@ -64,18 +64,13 @@ def get_all_data():
     tw_data = {}
     intl_data = {}
     
-    # 這是國際版 API 必須要有的「通行證」標頭
     COMPLEX_HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Origin": "https://kmonstar.com",
-        "Referer": "https://kmonstar.com/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da", # 加上來源頁面
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
+        "Accept": "application/json",
+        "Referer": "https://kmonstar.com/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da",
     }
 
-    # 1. 台灣版抓取 (保持不變)
+    # 1. 台灣版抓取
     try:
         res_tw = requests.get(f"{TW_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_tw.status_code == 200:
@@ -84,36 +79,30 @@ def get_all_data():
                 tw_data[v['option1']] = abs(v.get('inventory_quantity', 0))
     except: pass
 
-    # 2. 國際版抓取 (模擬瀏覽器存取)
+    # 2. 國際版抓取 (針對 optionList 修正)
     try:
-        # 使用 Session 會話來維持連線穩定度
-        session = requests.Session()
-        res_intl = session.get(f"{INTL_API}", headers=COMPLEX_HEADERS, timeout=15)
-        
+        res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_intl.status_code == 200:
             intl_json = res_intl.json()
-            
-            # 根據你提供的截圖，我們直接從 data 層級裡面找
             data_body = intl_json.get('data', {})
             
-            # 判斷 data 是不是我們要的格式
-            if isinstance(data_body, dict):
-                options = data_body.get('options', [])
-                if options:
-                    for o in options:
-                        name = o.get('option_name')
-                        sales = o.get('sales_count', 0)
-                        if name:
-                            intl_data[name] = sales
-                else:
-                    # 再次防錯：如果 options 不在裡面，印出 data 內部的所有 key
-                    st.write(f"DEBUG - Data 內部的欄位有: {list(data_body.keys())}")
+            # 關鍵點：根據你的 DEBUG，資料在 'optionList' 裡
+            options = data_body.get('optionList', [])
+            
+            if options:
+                for o in options:
+                    # 國際版 optionList 內的欄位通常是 'optionName' 和 'salesCount'
+                    name = o.get('optionName') or o.get('option_name')
+                    # 抓取銷售量
+                    sales = o.get('salesCount') or o.get('sales_count') or 0
+                    
+                    if name:
+                        intl_data[name] = sales
+                # 成功抓到後，可以把 DEBUG 訊息註解掉
             else:
-                st.write(f"DEBUG - Data 格式異常: {type(data_body)}")
-        else:
-            st.warning(f"國際版 API 連線不成功，狀態碼: {res_intl.status_code}")
+                st.warning("成功進入 data，但在裡面找不到 optionList 資料")
     except Exception as e:
-        st.error(f"國際版抓取發生錯誤: {e}")
+        st.error(f"國際版抓取失敗: {e}")
             
     return tw_data, intl_data
     
