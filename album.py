@@ -70,7 +70,7 @@ def get_all_data():
         "Referer": "https://kmonstar.com/"
     }
 
-    # 1. 台灣版抓取
+    # 1. 台灣版抓取 (保持不變)
     try:
         res_tw = requests.get(f"{TW_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_tw.status_code == 200:
@@ -80,32 +80,49 @@ def get_all_data():
     except Exception as e:
         st.error(f"台灣版 API 連線失敗: {e}")
 
-  # 2. 國際版抓取 (針對你提供的 DEBUG 結構進行修正)
+    # 2. 國際版抓取 (終極防護版)
     try:
         res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_intl.status_code == 200:
             intl_json = res_intl.json()
             
-            # 根據 DEBUG 顯示，資料在 'data' 欄位裡
-            options = []
-            if 'data' in intl_json and isinstance(intl_json['data'], dict):
-                options = intl_json['data'].get('options', [])
-            elif 'options' in intl_json: # 備用路徑
-                options = intl_json['options']
+            # 第一層檢查：data 是否存在
+            data_content = intl_json.get('data', {})
             
+            # 獲取 options，嘗試從不同位置抓取
+            options = []
+            if isinstance(data_content, dict):
+                # 情況 A: data 是一個 dict，options 在裡面
+                options = data_content.get('options', [])
+                # 情況 B: 或是 options 直接就在 data 層級但名稱不同（某些 API 的特殊行為）
+                if not options:
+                    # 嘗試抓取第一個看起來像清單的欄位
+                    for val in data_content.values():
+                        if isinstance(val, list) and len(val) > 0 and 'option_name' in str(val[0]):
+                            options = val
+                            break
+            elif isinstance(data_content, list):
+                # 情況 C: data 本身就是一個 list
+                options = data_content
+
             if options:
                 for o in options:
-                    name = o.get('option_name')
-                    sales = o.get('sales_count', 0)
-                    if name:
-                        intl_data[name] = sales
-                # 如果成功抓到，可以把 debug 訊息拿掉或換成成功提示
+                    if isinstance(o, dict):
+                        name = o.get('option_name')
+                        # 國際版有些欄位是 sales_count，有些是 sold_count，做個相容
+                        sales = o.get('sales_count') if o.get('sales_count') is not None else o.get('sold_count', 0)
+                        if name:
+                            intl_data[name] = sales
             else:
-                st.warning("國際版 API 解析成功，但在 'data' 內找不到 'options'")
+                # 萬一真的找不到，印出內容讓我們知道怎麼改
+                st.write("DEBUG - Data 實際內容:", data_content)
         else:
             st.warning(f"國際版 API 狀態碼: {res_intl.status_code}")
     except Exception as e:
-        st.error(f"國際版 API 連線失敗: {e}")
+        # 捕捉 TypeError (例如 data_content 是 None) 並防止 App 當掉
+        st.error(f"國際版數據解析失敗: {e}")
+            
+    return tw_data, intl_data
     
 # --- 4. 主程式執行 ---
 status_placeholder = st.empty()
