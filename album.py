@@ -23,7 +23,7 @@ except Exception as e:
 
 # --- 2. 原始設定區 ---
 st.set_page_config(page_title="tripleS Neptune 雙版監控", layout="wide")
-st.title("🌌 tripleS Neptune 台北應募 - 雙版聯動監控")
+st.title("🌌 tripleS Neptune 台北應募")
 
 # 雙來源 API
 TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
@@ -156,7 +156,7 @@ while True:
 
         # --- 5. 畫面渲染 ---
         with status_placeholder.container():
-            st.write("### 👥 雙版合算總統計")
+            st.write("### 👥 總統計")
             summary = []
             for n in all_names:
                 tw = tw_res.get(n, 0)
