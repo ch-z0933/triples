@@ -22,7 +22,7 @@ except Exception as e:
     sheet = None
 
 # --- 2. 原始設定區 ---
-st.set_page_config(page_title="tripleS Neptune ", layout="wide")
+st.set_page_config(page_title="tripleS Neptune", layout="wide")
 st.title("🌌 tripleS Neptune 台北應募 - 即時銷售")
 
 API_URL = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
@@ -70,7 +70,7 @@ while True:
         tz = pytz.timezone('Asia/Taipei')
         now = datetime.now(tz).strftime("%H:%M:%S")
         
-        # A. 總銷量異動 (第一次啟動也記錄一筆初始總量)
+        # A. 總銷量異動
         if current_total != st.session_state.last_val:
             diff = current_total - st.session_state.last_val if st.session_state.last_val > 0 else current_total
             label = f"+{diff}" if st.session_state.last_val > 0 else f"初始 {diff}"
@@ -83,19 +83,16 @@ while True:
             name = m['成員名稱']
             current_sales = m['總銷售量']
             
-            # 關鍵修改：如果是第一次偵測到該成員
             if name not in st.session_state.member_last_sales:
                 st.session_state.member_last_sales[name] = current_sales
-                # 如果初始就有銷量，直接塞進 log 好讓排行榜抓得到
                 if current_sales > 0:
                     st.session_state.member_logs[name] = pd.DataFrame([
                         {'時間': f'啟動初始({now})', '張數': current_sales, '狀態': '初始數據', '總銷售量': current_sales}
                     ])
                 else:
                     st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '狀態', '總銷售量'])
-                continue # 初始完畢跳過本次循環
+                continue 
 
-            # 偵測後續變化
             last_sales = st.session_state.member_last_sales[name]
             if current_sales != last_sales:
                 diff_sales = current_sales - last_sales
@@ -149,10 +146,11 @@ while True:
                     with c_right:
                         st.write("🏆 **單筆訂單排名**")
                         if not log_df.empty:
-                            # 這樣就會把「啟動初始」的那一筆也排進去
+                            # 篩選正數張數，並強制按張數從大到小排序
                             rank_df = log_df[log_df['張數'] > 0][['張數']].copy()
                             if not rank_df.empty:
                                 rank_df = rank_df.sort_values(by='張數', ascending=False).reset_index(drop=True)
+                                # 名次從 1 開始計算
                                 rank_df.index = rank_df.index + 1
                                 rank_df.index.name = '排名'
                                 rank_df.columns = ['單筆張數']
