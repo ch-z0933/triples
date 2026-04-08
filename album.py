@@ -22,8 +22,8 @@ except Exception as e:
     sheet = None
 
 # --- 2. 原始設定區 ---
-st.set_page_config(page_title="tripleS Neptune 戰情室", layout="wide")
-st.title("🌌 tripleS Neptune 台北應募 - 即時銷售監控")
+st.set_page_config(page_title="tripleS Neptune ", layout="wide")
+st.title("🌌 tripleS Neptune 台北應募 - 即時銷售")
 
 API_URL = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
 
@@ -147,7 +147,7 @@ while True:
                             st.info("尚無紀錄")
 
                     with c_right:
-                        st.write("🏆 **單筆訂單排行榜**")
+                        st.write("🏆 **單筆訂單排名**")
                         if not log_df.empty:
                             # 這樣就會把「啟動初始」的那一筆也排進去
                             rank_df = log_df[log_df['張數'] > 0][['張數']].copy()
@@ -162,7 +162,7 @@ while True:
                         else:
                             st.info("尚無數據")
 
-            st.write("### 📜 全體銷售異動日誌")
+            st.write("### 📜 全體銷售異動")
             st.dataframe(st.session_state.history, use_container_width=True, hide_index=True)
 
     time.sleep(15)
