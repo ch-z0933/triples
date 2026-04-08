@@ -64,10 +64,15 @@ def get_all_data():
     tw_data = {}
     intl_data = {}
     
+    # 這是國際版 API 必須要有的「通行證」標頭
     COMPLEX_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://kmonstar.com/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Origin": "https://kmonstar.com",
+        "Referer": "https://kmonstar.com/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da", # 加上來源頁面
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     }
 
     # 1. 台灣版抓取 (保持不變)
@@ -77,50 +82,38 @@ def get_all_data():
             tw_json = res_tw.json()
             for v in tw_json.get('variants', []):
                 tw_data[v['option1']] = abs(v.get('inventory_quantity', 0))
-    except Exception as e:
-        st.error(f"台灣版 API 連線失敗: {e}")
+    except: pass
 
-    # 2. 國際版抓取 (終極防護版)
+    # 2. 國際版抓取 (模擬瀏覽器存取)
     try:
-        res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
+        # 使用 Session 會話來維持連線穩定度
+        session = requests.Session()
+        res_intl = session.get(f"{INTL_API}", headers=COMPLEX_HEADERS, timeout=15)
+        
         if res_intl.status_code == 200:
             intl_json = res_intl.json()
             
-            # 第一層檢查：data 是否存在
-            data_content = intl_json.get('data', {})
+            # 根據你提供的截圖，我們直接從 data 層級裡面找
+            data_body = intl_json.get('data', {})
             
-            # 獲取 options，嘗試從不同位置抓取
-            options = []
-            if isinstance(data_content, dict):
-                # 情況 A: data 是一個 dict，options 在裡面
-                options = data_content.get('options', [])
-                # 情況 B: 或是 options 直接就在 data 層級但名稱不同（某些 API 的特殊行為）
-                if not options:
-                    # 嘗試抓取第一個看起來像清單的欄位
-                    for val in data_content.values():
-                        if isinstance(val, list) and len(val) > 0 and 'option_name' in str(val[0]):
-                            options = val
-                            break
-            elif isinstance(data_content, list):
-                # 情況 C: data 本身就是一個 list
-                options = data_content
-
-            if options:
-                for o in options:
-                    if isinstance(o, dict):
+            # 判斷 data 是不是我們要的格式
+            if isinstance(data_body, dict):
+                options = data_body.get('options', [])
+                if options:
+                    for o in options:
                         name = o.get('option_name')
-                        # 國際版有些欄位是 sales_count，有些是 sold_count，做個相容
-                        sales = o.get('sales_count') if o.get('sales_count') is not None else o.get('sold_count', 0)
+                        sales = o.get('sales_count', 0)
                         if name:
                             intl_data[name] = sales
+                else:
+                    # 再次防錯：如果 options 不在裡面，印出 data 內部的所有 key
+                    st.write(f"DEBUG - Data 內部的欄位有: {list(data_body.keys())}")
             else:
-                # 萬一真的找不到，印出內容讓我們知道怎麼改
-                st.write("DEBUG - Data 實際內容:", data_content)
+                st.write(f"DEBUG - Data 格式異常: {type(data_body)}")
         else:
-            st.warning(f"國際版 API 狀態碼: {res_intl.status_code}")
+            st.warning(f"國際版 API 連線不成功，狀態碼: {res_intl.status_code}")
     except Exception as e:
-        # 捕捉 TypeError (例如 data_content 是 None) 並防止 App 當掉
-        st.error(f"國際版數據解析失敗: {e}")
+        st.error(f"國際版抓取發生錯誤: {e}")
             
     return tw_data, intl_data
     
