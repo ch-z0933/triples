@@ -80,18 +80,18 @@ def get_all_data():
     except Exception as e:
         st.error(f"台灣版 API 連線失敗: {e}")
 
-    # 2. 國際版抓取 (強化解析邏輯)
+  # 2. 國際版抓取 (針對你提供的 DEBUG 結構進行修正)
     try:
         res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_intl.status_code == 200:
             intl_json = res_intl.json()
             
-            # 嘗試多種可能的路徑
+            # 根據 DEBUG 顯示，資料在 'data' 欄位裡
             options = []
-            if 'options' in intl_json:
+            if 'data' in intl_json and isinstance(intl_json['data'], dict):
+                options = intl_json['data'].get('options', [])
+            elif 'options' in intl_json: # 備用路徑
                 options = intl_json['options']
-            elif 'data' in intl_json and 'options' in intl_json['data']:
-                options = intl_json['data']['options']
             
             if options:
                 for o in options:
@@ -99,15 +99,13 @@ def get_all_data():
                     sales = o.get('sales_count', 0)
                     if name:
                         intl_data[name] = sales
+                # 如果成功抓到，可以把 debug 訊息拿掉或換成成功提示
             else:
-                # 如果還是找不到，把 API 回傳的樣子印出來檢查（僅管理員可見）
-                st.write("DEBUG - 國際版 API 結構:", intl_json.keys())
+                st.warning("國際版 API 解析成功，但在 'data' 內找不到 'options'")
         else:
             st.warning(f"國際版 API 狀態碼: {res_intl.status_code}")
     except Exception as e:
         st.error(f"國際版 API 連線失敗: {e}")
-            
-    return tw_data, intl_data
     
 # --- 4. 主程式執行 ---
 status_placeholder = st.empty()
