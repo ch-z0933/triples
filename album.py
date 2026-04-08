@@ -128,7 +128,7 @@ while True:
             
             st.write("### 📄 個別應募紀錄與排行")
             m_names = [m['成員名稱'] for m in members]
-            tabs = st.tabs([f"{n} ({st.session_state.member_last_sales.get(n, 0)}張)" for n in m_names])
+            tabs = st.tabs([f"{name}" for name in m_names])
             
             for i, tab in enumerate(tabs):
                 m_name = m_names[i]
