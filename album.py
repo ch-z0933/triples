@@ -60,26 +60,50 @@ def sync_from_cloud(names):
                 except:
                     st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷量'])
 
-# 同時抓取兩邊數據
+# --- 修改後的數據抓取函式 ---
 def get_all_data():
     tw_data = {}
     intl_data = {}
-    try:
-        # 抓台灣版
-        res_tw = requests.get(f"{TW_API}?t={int(time.time())}", headers=HEADERS, timeout=10).json()
-        for v in res_tw.get('variants', []):
-            tw_data[v['option1']] = abs(v.get('inventory_quantity', 0))
-        
-        # 抓國際版
-        res_intl = requests.get(INTL_API, headers=HEADERS, timeout=10).json()
-        for o in res_intl.get('options', []):
-            intl_data[o['option_name']] = o.get('sales_count', 0)
-            
-        return tw_data, intl_data
-    except Exception as e:
-        st.error(f"API 抓取錯誤: {e}")
-        return None, None
+    
+    # 模擬更像真實瀏覽器的標頭
+    COMPLEX_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://kmonstar.com",
+        "Referer": "https://kmonstar.com/"
+    }
 
+    # 1. 抓取台灣版
+    try:
+        res_tw = requests.get(f"{TW_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
+        if res_tw.status_code == 200:
+            tw_json = res_tw.json()
+            for v in tw_json.get('variants', []):
+                tw_data[v['option1']] = abs(v.get('inventory_quantity', 0))
+        else:
+            st.warning(f"台灣版 API 回傳狀態碼: {res_tw.status_code}")
+    except Exception as e:
+        st.error(f"台灣版 API 連線失敗: {e}")
+
+    # 2. 抓取國際版
+    try:
+        # 加上隨機參數避免快取
+        res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
+        if res_intl.status_code == 200:
+            intl_json = res_intl.json()
+            # 這裡多做一個檢查，確認 JSON 結構正確
+            if isinstance(intl_json, dict) and 'options' in intl_json:
+                for o in intl_json.get('options', []):
+                    intl_data[o['option_name']] = o.get('sales_count', 0)
+            else:
+                st.warning("國際版 API 解析成功但找不到 options 欄位")
+        else:
+            st.warning(f"國際版 API 回傳狀態碼: {res_intl.status_code}")
+    except Exception as e:
+        st.error(f"國際版 API 連線失敗: {e}")
+            
+    return tw_data, intl_data
+    
 # --- 4. 主程式執行 ---
 status_placeholder = st.empty()
 
