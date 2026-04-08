@@ -24,8 +24,8 @@ except Exception as e:
     sheet = None
 
 # --- 2. 原始設定區 ---
-st.set_page_config(page_title="tripleS Neptune 戰情室", layout="wide")
-st.title("🌌 tripleS Neptune 台北應募 - 即時銷售監控")
+st.set_page_config(page_title="tripleS Neptune ", layout="wide")
+st.title("🌌 tripleS Neptune 台北應募 - 即時銷售")
 
 # 這次活動的 API 網址
 API_URL = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
