@@ -100,62 +100,55 @@ while True:
     
     if tw_res is not None and intl_res is not None:
         all_names = list(set(list(tw_res.keys()) + list(intl_res.keys())))
+        # 先從雲端同步最新的 dataframe 到本地 session_state
         sync_from_cloud(all_names)
         
         tz = pytz.timezone('Asia/Taipei')
         now = datetime.now(tz).strftime("%H:%M:%S")
         
         for name in all_names:
-            # 清理名稱空格，避免因為不可見字元導致比對失敗
             clean_name = name.strip()
             tw_now = tw_res.get(name, 0)
             intl_now = intl_res.get(name, 0)
-            total_now = tw_now + intl_now
+            total_now = tw_now + intl_now # 這是 API 目前抓到的最新總數
             
-            # 建立 Session 狀態中的紀錄（如果不存在）
-            if name not in st.session_state.member_logs:
-                st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷量'])
-
-            # --- 關鍵修正：如果目前紀錄是空的，強制補入現有數據 ---
-            if total_now > 0 and st.session_state.member_logs[name].empty:
+            # 取得該成員目前的歷史紀錄 DataFrame
+            log_df = st.session_state.member_logs.get(name, pd.DataFrame())
+            
+            # --- 核心邏輯：與 Google Sheet 的最後一筆「總銷量」對比 ---
+            last_total_in_sheet = 0
+            if not log_df.empty:
+                # 假設 log_df 是按時間降序排列，取第一列(最新的)總銷量
+                last_total_in_sheet = log_df.iloc[0]['總銷量']
+            
+            # 計算差額 (API 目前總量 - 雲端最後總量)
+            diff = total_now - last_total_in_sheet
+            
+            if diff > 0:
+                # 代表在你網頁關閉期間或現在，有新的銷量產生
+                # 我們把這個差額補進去
+                source = "補抓/變動" # 標註為變動偵測
                 if gc:
                     try:
-                        # 嘗試寫入雲端，如果分頁名稱有細微差異，這裡會嘗試抓取
                         wks = gc.worksheet(clean_name)
-                        wks.append_row([now, total_now, "初始同步", total_now])
+                        # 寫入：時間, 增加張數, 來源, 寫入後的最新總銷量
+                        wks.append_row([now, int(diff), source, int(total_now)])
                         
-                        # 更新本地顯示
-                        new_entry = pd.DataFrame([{'時間': now, '張數': total_now, '來源': "初始同步", '總銷量': total_now}])
-                        st.session_state.member_logs[name] = new_entry
+                        # 更新本地顯示 (讓使用者立刻看到)
+                        new_entry = pd.DataFrame([{'時間': now, '張數': int(diff), '來源': source, '總銷量': int(total_now)}])
+                        st.session_state.member_logs[name] = pd.concat([new_entry, log_df], ignore_index=True)
+                        
+                        # 同步更新基準點，避免重複觸發
+                        st.session_state.last_tw_sales[name] = tw_now
+                        st.session_state.last_intl_sales[name] = intl_now
                     except Exception as e:
-                        # 如果寫入失敗，在頁面上顯示原因，方便我們除錯
-                        st.sidebar.error(f"無法寫入 {name} 的分頁: {e}")
-
-            # --- 正常變動偵測 (基準點處理) ---
+                        st.sidebar.error(f"寫入 {name} 失敗: {e}")
+            
+            # 即使沒有 diff，也要確保基準點被初始化，避免其他邏輯衝突
             if name not in st.session_state.last_tw_sales:
                 st.session_state.last_tw_sales[name] = tw_now
                 st.session_state.last_intl_sales[name] = intl_now
-                continue
-            
-            # 偵測台灣版新增加
-            diff_tw = tw_now - st.session_state.last_tw_sales[name]
-            if diff_tw > 0:
-                if gc:
-                    try: gc.worksheet(clean_name).append_row([now, diff_tw, "台灣版", total_now])
-                    except: pass
-                new_entry = pd.DataFrame([{'時間': now, '張數': diff_tw, '來源': "台灣版", '總銷量': total_now}])
-                st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
-                st.session_state.last_tw_sales[name] = tw_now
-            
-            # 偵測國際版新增加
-            diff_intl = intl_now - st.session_state.last_intl_sales[name]
-            if diff_intl > 0:
-                if gc:
-                    try: gc.worksheet(clean_name).append_row([now, diff_intl, "國際版", total_now])
-                    except: pass
-                new_entry = pd.DataFrame([{'時間': now, '張數': diff_intl, '來源': "國際版", '總銷量': total_now}])
-                st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
-                st.session_state.last_intl_sales[name] = intl_now
+
 
         # --- 5. 畫面渲染 ---
         with status_placeholder.container():
