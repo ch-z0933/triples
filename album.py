@@ -119,7 +119,7 @@ while True:
             last_total_in_sheet = 0
             if not log_df.empty:
                 # 假設 log_df 是按時間降序排列，取第一列(最新的)總銷量
-                last_total_in_sheet = log_df.iloc[0]['總銷量']
+                last_total_in_sheet = log_df.iloc[0]['總銷售量']
             
             # 計算差額 (API 目前總量 - 雲端最後總量)
             diff = total_now - last_total_in_sheet
@@ -135,7 +135,7 @@ while True:
                         wks.append_row([now, int(diff), source, int(total_now)])
                         
                         # 更新本地顯示 (讓使用者立刻看到)
-                        new_entry = pd.DataFrame([{'時間': now, '張數': int(diff), '來源': source, '總銷量': int(total_now)}])
+                        new_entry = pd.DataFrame([{'時間': now, '張數': int(diff), '來源': source, '總銷售量': int(total_now)}])
                         st.session_state.member_logs[name] = pd.concat([new_entry, log_df], ignore_index=True)
                         
                         # 同步更新基準點，避免重複觸發
