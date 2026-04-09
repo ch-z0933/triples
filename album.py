@@ -25,7 +25,6 @@ except Exception as e:
 st.set_page_config(page_title="tripleS Neptune 雙版監控", layout="wide")
 st.title("🌌 tripleS Neptune 台北應募")
 
-# 雙來源 API
 TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
 INTL_API = "https://kmonstar.com/api/v1/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da"
 
@@ -39,7 +38,6 @@ if 'last_tw_sales' not in st.session_state:
 if 'last_intl_sales' not in st.session_state:
     st.session_state.last_intl_sales = {}
 
-# 同步函數：讀取 Google Sheets 歷史
 def sync_from_cloud(names):
     if gc:
         for name in names:
@@ -65,13 +63,17 @@ def get_all_data():
         "Referer": "https://kmonstar.com/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da",
     }
 
-    # 1. 台灣版抓取
+    # 1. 台灣版抓取 (改為累加模式，解決多個 Variant 問題)
     try:
         res_tw = requests.get(f"{TW_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_tw.status_code == 200:
             tw_json = res_tw.json()
             for v in tw_json.get('variants', []):
-                tw_data[v['option1']] = abs(v.get('inventory_quantity', 0))
+                name = v.get('option1')
+                if name:
+                    # 使用累加，確保像 Nien 這種 -55 的數據能被完整計入
+                    sold = abs(v.get('inventory_quantity', 0))
+                    tw_data[name] = tw_data.get(name, 0) + sold
     except: pass
 
     # 2. 國際版抓取
@@ -86,7 +88,7 @@ def get_all_data():
                     name = o.get('optionName') or o.get('option_name')
                     sales = o.get('salesCount') or o.get('sales_count') or 0
                     if name:
-                        intl_data[name] = sales
+                        intl_data[name] = intl_data.get(name, 0) + sales
     except: pass
     return tw_data, intl_data
     
@@ -107,14 +109,14 @@ while True:
             tw_now = tw_res.get(name, 0)
             intl_now = intl_res.get(name, 0)
             
-            # --- 初始化基準值與補齊初始數據 ---
+            # --- 初始化與補齊數據 ---
             if name not in st.session_state.last_tw_sales:
+                # 建立基準點
                 st.session_state.last_tw_sales[name] = tw_now
                 st.session_state.last_intl_sales[name] = intl_now
                 
-                # 如果啟動時發現已經有銷量，且紀錄是空的，則寫入初始紀錄
+                # 如果偵測到雲端表單目前是空的，但 API 已經有數據，則補入「初始數據」
                 if (tw_now > 0 or intl_now > 0) and st.session_state.member_logs[name].empty:
-                    # 分別紀錄
                     if tw_now > 0:
                         if gc:
                             try: gc.worksheet(name).append_row([now, tw_now, "台版初始", tw_now])
@@ -131,40 +133,38 @@ while True:
                         st.session_state.member_logs[name] = pd.concat([new_intl, st.session_state.member_logs[name]], ignore_index=True)
                 continue
             
-            # --- 正常變動偵測 ---
-            # 偵測台灣版
+            # --- 偵測變動 ---
+            # 台灣版
             diff_tw = tw_now - st.session_state.last_tw_sales[name]
             if diff_tw > 0:
-                source = "台灣版"
                 total_m = tw_now + intl_now
                 if gc:
-                    try: gc.worksheet(name).append_row([now, diff_tw, source, total_m])
+                    try: gc.worksheet(name).append_row([now, diff_tw, "台灣版", total_m])
                     except: pass
-                new_entry = pd.DataFrame([{'時間': now, '張數': diff_tw, '來源': source, '總銷量': total_m}])
+                new_entry = pd.DataFrame([{'時間': now, '張數': diff_tw, '來源': "台灣版", '總銷量': total_m}])
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_tw_sales[name] = tw_now
             
-            # 偵測國際版
+            # 國際版
             diff_intl = intl_now - st.session_state.last_intl_sales[name]
             if diff_intl > 0:
-                source = "國際版"
                 total_m = tw_now + intl_now
                 if gc:
-                    try: gc.worksheet(name).append_row([now, diff_intl, source, total_m])
+                    try: gc.worksheet(name).append_row([now, diff_intl, "國際版", total_m])
                     except: pass
-                new_entry = pd.DataFrame([{'時間': now, '張數': diff_intl, '來源': source, '總銷量': total_m}])
+                new_entry = pd.DataFrame([{'時間': now, '張數': diff_intl, '來源': "國際版", '總銷量': total_m}])
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_intl_sales[name] = intl_now
 
         # --- 5. 畫面渲染 ---
         with status_placeholder.container():
-            st.write("### 👥 總統計")
+            st.write("### 👥 雙版合算總統計")
             summary = []
             for n in all_names:
                 tw = tw_res.get(n, 0)
                 intl = intl_res.get(n, 0)
-                summary.append({"成員名稱": n, "台灣版": tw, "國際版": intl, "總計銷量": tw + intl})
-            st.table(pd.DataFrame(summary).sort_values("總計銷量", ascending=False))
+                summary.append({"成員名稱": n, "台灣版銷量": tw, "國際版銷量": intl, "總計": tw + intl})
+            st.table(pd.DataFrame(summary).sort_values("總計", ascending=False))
 
             st.divider()
             
@@ -175,12 +175,11 @@ while True:
                     log_df = st.session_state.member_logs.get(m_name, pd.DataFrame())
                     cl, cr = st.columns(2)
                     with cl:
-                        st.write("🕒 **合併時間紀錄**")
+                        st.write("🕒 **銷售時間紀錄**")
                         if not log_df.empty:
-                            # 確保欄位順序正確
                             st.dataframe(log_df[['時間', '張數', '來源']], use_container_width=True, hide_index=True)
                     with cr:
-                        st.write("🏆 **單筆排行 (不分版本)**")
+                        st.write("🏆 **單筆排行**")
                         if not log_df.empty:
                             rank_df = log_df[log_df['張數'] > 0].copy()
                             if not rank_df.empty:
@@ -193,5 +192,5 @@ while True:
                                 })
                                 st.table(rank_display)
 
-    time.sleep(15)
+    time.sleep(30) # 建議改為 30 秒，對 API 比較友善
     st.rerun()
