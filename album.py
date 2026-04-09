@@ -106,52 +106,56 @@ while True:
         now = datetime.now(tz).strftime("%H:%M:%S")
         
         for name in all_names:
+            # 清理名稱空格，避免因為不可見字元導致比對失敗
+            clean_name = name.strip()
             tw_now = tw_res.get(name, 0)
             intl_now = intl_res.get(name, 0)
             total_now = tw_now + intl_now
             
-            # --- 初始化與「補回歷史紀錄」邏輯 ---
+            # 建立 Session 狀態中的紀錄（如果不存在）
+            if name not in st.session_state.member_logs:
+                st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷量'])
+
+            # --- 關鍵修正：如果目前紀錄是空的，強制補入現有數據 ---
+            if total_now > 0 and st.session_state.member_logs[name].empty:
+                if gc:
+                    try:
+                        # 嘗試寫入雲端，如果分頁名稱有細微差異，這裡會嘗試抓取
+                        wks = gc.worksheet(clean_name)
+                        wks.append_row([now, total_now, "初始同步", total_now])
+                        
+                        # 更新本地顯示
+                        new_entry = pd.DataFrame([{'時間': now, '張數': total_now, '來源': "初始同步", '總銷量': total_now}])
+                        st.session_state.member_logs[name] = new_entry
+                    except Exception as e:
+                        # 如果寫入失敗，在頁面上顯示原因，方便我們除錯
+                        st.sidebar.error(f"無法寫入 {name} 的分頁: {e}")
+
+            # --- 正常變動偵測 (基準點處理) ---
             if name not in st.session_state.last_tw_sales:
                 st.session_state.last_tw_sales[name] = tw_now
                 st.session_state.last_intl_sales[name] = intl_now
-                
-                # 關鍵修改：如果讀取的雲端紀錄為空，但 API 已經有銷量，直接補一筆總量進去
-                if total_now > 0 and st.session_state.member_logs[name].empty:
-                    source = "歷史既有銷量"
-                    if gc:
-                        try:
-                            # 直接把現有的張數寫入 Google Sheet 第一列
-                            gc.worksheet(name).append_row([now, total_now, source, total_now])
-                        except: pass
-                    
-                    # 同步更新網頁顯示
-                    new_entry = pd.DataFrame([{'時間': now, '張數': total_now, '來源': source, '總銷量': total_now}])
-                    st.session_state.member_logs[name] = new_entry
                 continue
             
-            # --- 以下為正常變動偵測 (偵測啟動後的新訂單) ---
-            # 偵測台灣版
+            # 偵測台灣版新增加
             diff_tw = tw_now - st.session_state.last_tw_sales[name]
             if diff_tw > 0:
-                total_m = tw_now + intl_now
                 if gc:
-                    try: gc.worksheet(name).append_row([now, diff_tw, "台灣版", total_m])
+                    try: gc.worksheet(clean_name).append_row([now, diff_tw, "台灣版", total_now])
                     except: pass
-                new_entry = pd.DataFrame([{'時間': now, '張數': diff_tw, '來源': "台灣版", '總銷量': total_m}])
+                new_entry = pd.DataFrame([{'時間': now, '張數': diff_tw, '來源': "台灣版", '總銷量': total_now}])
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_tw_sales[name] = tw_now
             
-            # 偵測國際版
+            # 偵測國際版新增加
             diff_intl = intl_now - st.session_state.last_intl_sales[name]
             if diff_intl > 0:
-                total_m = tw_now + intl_now
                 if gc:
-                    try: gc.worksheet(name).append_row([now, diff_intl, "國際版", total_m])
+                    try: gc.worksheet(clean_name).append_row([now, diff_intl, "國際版", total_now])
                     except: pass
-                new_entry = pd.DataFrame([{'時間': now, '張數': diff_intl, '來源': "國際版", '總銷量': total_m}])
+                new_entry = pd.DataFrame([{'時間': now, '張數': diff_intl, '來源': "國際版", '總銷量': total_now}])
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_intl_sales[name] = intl_now
-
 
         # --- 5. 畫面渲染 ---
         with status_placeholder.container():
@@ -189,5 +193,6 @@ while True:
                                 })
                                 st.table(rank_display)
 
-    time.sleep(30) # 建議改為 30 秒，對 API 比較友善
+    time.sleep(15)
     st.rerun()
+
