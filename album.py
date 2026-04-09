@@ -29,14 +29,11 @@ st.title("🌌 tripleS Neptune 台北應募")
 TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
 INTL_API = "https://kmonstar.com/api/v1/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da"
 
-HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-
 # --- 3. 初始化資料 ---
 if 'history' not in st.session_state:
     st.session_state.history = pd.DataFrame(columns=['時間', '來源', '最新總銷量', '變動'])
 if 'member_logs' not in st.session_state:
     st.session_state.member_logs = {}
-# 分別記錄兩版的最後銷量
 if 'last_tw_sales' not in st.session_state:
     st.session_state.last_tw_sales = {}
 if 'last_intl_sales' not in st.session_state:
@@ -54,7 +51,6 @@ def sync_from_cloud(names):
                         df = pd.DataFrame(data)
                         df['張數'] = pd.to_numeric(df['張數'], errors='coerce').fillna(0)
                         st.session_state.member_logs[name] = df.sort_index(ascending=False)
-                        # 初始基準設為 0，等第一次抓 API 再更新
                     else:
                         st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷量'])
                 except:
@@ -63,7 +59,6 @@ def sync_from_cloud(names):
 def get_all_data():
     tw_data = {}
     intl_data = {}
-    
     COMPLEX_HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json",
@@ -79,31 +74,20 @@ def get_all_data():
                 tw_data[v['option1']] = abs(v.get('inventory_quantity', 0))
     except: pass
 
-    # 2. 國際版抓取 (針對 optionList 修正)
+    # 2. 國際版抓取
     try:
         res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
         if res_intl.status_code == 200:
             intl_json = res_intl.json()
             data_body = intl_json.get('data', {})
-            
-            # 關鍵點：根據你的 DEBUG，資料在 'optionList' 裡
             options = data_body.get('optionList', [])
-            
             if options:
                 for o in options:
-                    # 國際版 optionList 內的欄位通常是 'optionName' 和 'salesCount'
                     name = o.get('optionName') or o.get('option_name')
-                    # 抓取銷售量
                     sales = o.get('salesCount') or o.get('sales_count') or 0
-                    
                     if name:
                         intl_data[name] = sales
-                # 成功抓到後，可以把 DEBUG 訊息註解掉
-            else:
-                st.warning("成功進入 data，但在裡面找不到 optionList 資料")
-    except Exception as e:
-        st.error(f"國際版抓取失敗: {e}")
-            
+    except: pass
     return tw_data, intl_data
     
 # --- 4. 主程式執行 ---
@@ -119,20 +103,38 @@ while True:
         tz = pytz.timezone('Asia/Taipei')
         now = datetime.now(tz).strftime("%H:%M:%S")
         
-        # 核心對比邏輯
         for name in all_names:
             tw_now = tw_res.get(name, 0)
             intl_now = intl_res.get(name, 0)
             
-            # 初始化
+            # --- 初始化基準值與補齊初始數據 ---
             if name not in st.session_state.last_tw_sales:
                 st.session_state.last_tw_sales[name] = tw_now
                 st.session_state.last_intl_sales[name] = intl_now
+                
+                # 如果啟動時發現已經有銷量，且紀錄是空的，則寫入初始紀錄
+                if (tw_now > 0 or intl_now > 0) and st.session_state.member_logs[name].empty:
+                    # 分別紀錄
+                    if tw_now > 0:
+                        if gc:
+                            try: gc.worksheet(name).append_row([now, tw_now, "台版初始", tw_now])
+                            except: pass
+                        new_tw = pd.DataFrame([{'時間': now, '張數': tw_now, '來源': '台版初始', '總銷量': tw_now}])
+                        st.session_state.member_logs[name] = pd.concat([new_tw, st.session_state.member_logs[name]], ignore_index=True)
+                    
+                    if intl_now > 0:
+                        total_init = tw_now + intl_now
+                        if gc:
+                            try: gc.worksheet(name).append_row([now, intl_now, "國際初始", total_init])
+                            except: pass
+                        new_intl = pd.DataFrame([{'時間': now, '張數': intl_now, '來源': '國際初始', '總銷量': total_init}])
+                        st.session_state.member_logs[name] = pd.concat([new_intl, st.session_state.member_logs[name]], ignore_index=True)
                 continue
             
-            # 偵測台灣版變動
+            # --- 正常變動偵測 ---
+            # 偵測台灣版
             diff_tw = tw_now - st.session_state.last_tw_sales[name]
-            if diff_tw != 0:
+            if diff_tw > 0:
                 source = "台灣版"
                 total_m = tw_now + intl_now
                 if gc:
@@ -142,9 +144,9 @@ while True:
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_tw_sales[name] = tw_now
             
-            # 偵測國際版變動
+            # 偵測國際版
             diff_intl = intl_now - st.session_state.last_intl_sales[name]
-            if diff_intl != 0:
+            if diff_intl > 0:
                 source = "國際版"
                 total_m = tw_now + intl_now
                 if gc:
@@ -175,6 +177,7 @@ while True:
                     with cl:
                         st.write("🕒 **合併時間紀錄**")
                         if not log_df.empty:
+                            # 確保欄位順序正確
                             st.dataframe(log_df[['時間', '張數', '來源']], use_container_width=True, hide_index=True)
                     with cr:
                         st.write("🏆 **單筆排行 (不分版本)**")
@@ -184,7 +187,7 @@ while True:
                                 rank_df = rank_df.sort_values("張數", ascending=False).reset_index(drop=True)
                                 rank_df.index = rank_df.index + 1
                                 rank_display = pd.DataFrame({
-                                    "排名": [f"第 {i} 名" for i in rank_df.index],
+                                    "排名": [f"第 {idx} 名" for idx in rank_df.index],
                                     "單筆張數": rank_df['張數'].values,
                                     "來源": rank_df['來源'].values
                                 })
