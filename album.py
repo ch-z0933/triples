@@ -91,7 +91,7 @@ def get_all_data():
                         intl_data[name] = intl_data.get(name, 0) + sales
     except: pass
     return tw_data, intl_data
-    
+
 # --- 4. 主程式執行 ---
 status_placeholder = st.empty()
 
@@ -108,33 +108,29 @@ while True:
         for name in all_names:
             tw_now = tw_res.get(name, 0)
             intl_now = intl_res.get(name, 0)
+            total_now = tw_now + intl_now
             
-            # --- 初始化與補齊數據 ---
+            # --- 初始化與「補回歷史紀錄」邏輯 ---
             if name not in st.session_state.last_tw_sales:
-                # 建立基準點
                 st.session_state.last_tw_sales[name] = tw_now
                 st.session_state.last_intl_sales[name] = intl_now
                 
-                # 如果偵測到雲端表單目前是空的，但 API 已經有數據，則補入「初始數據」
-                if (tw_now > 0 or intl_now > 0) and st.session_state.member_logs[name].empty:
-                    if tw_now > 0:
-                        if gc:
-                            try: gc.worksheet(name).append_row([now, tw_now, "台版初始", tw_now])
-                            except: pass
-                        new_tw = pd.DataFrame([{'時間': now, '張數': tw_now, '來源': '台版初始', '總銷量': tw_now}])
-                        st.session_state.member_logs[name] = pd.concat([new_tw, st.session_state.member_logs[name]], ignore_index=True)
+                # 關鍵修改：如果讀取的雲端紀錄為空，但 API 已經有銷量，直接補一筆總量進去
+                if total_now > 0 and st.session_state.member_logs[name].empty:
+                    source = "歷史既有銷量"
+                    if gc:
+                        try:
+                            # 直接把現有的張數寫入 Google Sheet 第一列
+                            gc.worksheet(name).append_row([now, total_now, source, total_now])
+                        except: pass
                     
-                    if intl_now > 0:
-                        total_init = tw_now + intl_now
-                        if gc:
-                            try: gc.worksheet(name).append_row([now, intl_now, "國際初始", total_init])
-                            except: pass
-                        new_intl = pd.DataFrame([{'時間': now, '張數': intl_now, '來源': '國際初始', '總銷量': total_init}])
-                        st.session_state.member_logs[name] = pd.concat([new_intl, st.session_state.member_logs[name]], ignore_index=True)
+                    # 同步更新網頁顯示
+                    new_entry = pd.DataFrame([{'時間': now, '張數': total_now, '來源': source, '總銷量': total_now}])
+                    st.session_state.member_logs[name] = new_entry
                 continue
             
-            # --- 偵測變動 ---
-            # 台灣版
+            # --- 以下為正常變動偵測 (偵測啟動後的新訂單) ---
+            # 偵測台灣版
             diff_tw = tw_now - st.session_state.last_tw_sales[name]
             if diff_tw > 0:
                 total_m = tw_now + intl_now
@@ -145,7 +141,7 @@ while True:
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_tw_sales[name] = tw_now
             
-            # 國際版
+            # 偵測國際版
             diff_intl = intl_now - st.session_state.last_intl_sales[name]
             if diff_intl > 0:
                 total_m = tw_now + intl_now
@@ -155,6 +151,7 @@ while True:
                 new_entry = pd.DataFrame([{'時間': now, '張數': diff_intl, '來源': "國際版", '總銷量': total_m}])
                 st.session_state.member_logs[name] = pd.concat([new_entry, st.session_state.member_logs[name]], ignore_index=True)
                 st.session_state.last_intl_sales[name] = intl_now
+
 
         # --- 5. 畫面渲染 ---
         with status_placeholder.container():
