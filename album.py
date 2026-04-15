@@ -30,7 +30,7 @@ except Exception as e:
 # 2. 頁面設定
 # =========================
 st.set_page_config(page_title="tripleS Neptune 特別合照監控", layout="wide")
-st.title("🌌 tripleS Neptune SSS Summit in Asia 11 特別合照活動 in Taipei")
+st.title("🌌 tripleS 合照活動 in Taipei")
 
 TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-11-%E7%89%B9%E5%88%A5%E5%90%88%E7%85%A7%E6%B4%BB%E5%8B%95-in-taipei.json"
 
@@ -208,7 +208,7 @@ for name in all_names:
 
     # 只有增加時才寫入
     if diff > 0:
-        source = "API變動"
+        source = "tw"
         ok = append_sale_log(name, now, diff, source, total_now)
 
         if ok:
