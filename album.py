@@ -10,6 +10,7 @@ from google.oauth2.service_account import Credentials
 # --- 1. Google Sheets 核心連線 ---
 def init_connection():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    # 請確保 st.secrets 中有 gcp_service_account 設定
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(creds)
@@ -22,85 +23,76 @@ except Exception as e:
     gc = None
 
 # --- 2. 原始設定區 ---
-st.set_page_config(page_title="tripleS Neptune 雙版監控", layout="wide")
-st.title("🌌 tripleS Neptune 台北應募")
+st.set_page_config(page_title="tripleS Neptune 台北應募監控", layout="wide")
+st.title("🌌 tripleS Neptune SSS SUMMIT 台北站")
+st.caption("監控目標：KMONSTAR 台灣官網 (6位成員合照活動)")
 
-TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
-INTL_API = "https://kmonstar.com/api/v1/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da"
+# 這是你提供的 API 連結
+TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-11-%E7%89%B9%E5%88%A5%E4%B8%80%E5%B0%8D%E4%B8%80%E5%92%95-objekt-%E6%B4%BB%E5%8B%95-in-taipei.json"
 
 # --- 3. 初始化資料 ---
-if 'history' not in st.session_state:
-    st.session_state.history = pd.DataFrame(columns=['時間', '來源', '最新總銷量', '變動'])
 if 'member_logs' not in st.session_state:
     st.session_state.member_logs = {}
-if 'last_tw_sales' not in st.session_state:
-    st.session_state.last_tw_sales = {}
-if 'last_intl_sales' not in st.session_state:
-    st.session_state.last_intl_sales = {}
+if 'last_total_sales' not in st.session_state:
+    # 用來記錄上一次偵測到的「銷量」數值
+    st.session_state.last_total_sales = {}
 
 def sync_from_cloud(names):
     if gc:
         for name in names:
-            if name not in st.session_state.member_logs or st.session_state.member_logs[name].empty:
+            clean_name = name.strip()
+            if clean_name not in st.session_state.member_logs or st.session_state.member_logs[clean_name].empty:
                 try:
-                    wks = gc.worksheet(name)
+                    wks = gc.worksheet(clean_name)
                     data = wks.get_all_records()
                     if data:
                         df = pd.DataFrame(data)
                         df['張數'] = pd.to_numeric(df['張數'], errors='coerce').fillna(0)
-                        st.session_state.member_logs[name] = df.sort_index(ascending=False)
+                        st.session_state.member_logs[clean_name] = df.sort_index(ascending=False)
                     else:
-                        st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷量'])
+                        st.session_state.member_logs[clean_name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷售量'])
                 except:
-                    st.session_state.member_logs[name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷量'])
+                    # 若工作表不存在則建立 (可選)
+                    st.session_state.member_logs[clean_name] = pd.DataFrame(columns=['時間', '張數', '來源', '總銷售量'])
 
-def get_all_data():
-    tw_data = {}
-    intl_data = {}
-    COMPLEX_HEADERS = {
+def get_kmonstar_data():
+    """抓取 KMONSTAR 庫存並轉換為銷量數據"""
+    sales_data = {}
+    HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://kmonstar.com/event/detail/0ee4a010-3193-474c-85b8-989a1d4c07da",
     }
-
-    # 1. 台灣版抓取 (改為累加模式，解決多個 Variant 問題)
     try:
-        res_tw = requests.get(f"{TW_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
-        if res_tw.status_code == 200:
-            tw_json = res_tw.json()
-            for v in tw_json.get('variants', []):
-                name = v.get('option1')
-                if name:
-                    # 使用累加，確保像 Nien 這種 -55 的數據能被完整計入
-                    sold = abs(v.get('inventory_quantity', 0))
-                    tw_data[name] = tw_data.get(name, 0) + sold
-    except: pass
-
-    # 2. 國際版抓取
-    try:
-        res_intl = requests.get(f"{INTL_API}?t={int(time.time())}", headers=COMPLEX_HEADERS, timeout=10)
-        if res_intl.status_code == 200:
-            intl_json = res_intl.json()
-            data_body = intl_json.get('data', {})
-            options = data_body.get('optionList', [])
-            if options:
-                for o in options:
-                    name = o.get('optionName') or o.get('option_name')
-                    sales = o.get('salesCount') or o.get('sales_count') or 0
-                    if name:
-                        intl_data[name] = intl_data.get(name, 0) + sales
-    except: pass
-    return tw_data, intl_data
+        # 加入時間戳防止快取
+        res = requests.get(f"{TW_API}?t={int(time.time())}", headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            product_json = res.json().get('product', {})
+            variants = product_json.get('variants', [])
+            
+            for v in variants:
+                member_name = v.get('option1') # 通常是成員名字
+                # Shopify 庫存邏輯：
+                # 如果庫存是設為 100 往下扣，則銷量 = 初始值 - 當前值
+                # 這裡我們先取庫存的絕對值作為「觀察值」，或直接監控其變動
+                current_inv = v.get('inventory_quantity', 0)
+                
+                # 假設：銷量計算方式為我們監控它的「減少量」
+                # 為了方便統計，這裡存入的是「當前庫存的負值反轉」或是直接存庫存
+                # 建議：這裡先回傳原始庫存，邏輯在主迴圈處理
+                if member_name:
+                    sales_data[member_name] = current_inv
+            return sales_data
+    except Exception as e:
+        st.sidebar.error(f"API 抓取失敗: {e}")
+    return None
 
 # --- 4. 主程式執行 ---
 status_placeholder = st.empty()
 
 while True:
-    tw_res, intl_res = get_all_data()
+    current_inventory = get_kmonstar_data()
     
-    if tw_res is not None and intl_res is not None:
-        all_names = list(set(list(tw_res.keys()) + list(intl_res.keys())))
-        # 先從雲端同步最新的 dataframe 到本地 session_state
+    if current_inventory:
+        all_names = list(current_inventory.keys())
         sync_from_cloud(all_names)
         
         tz = pytz.timezone('Asia/Taipei')
@@ -108,84 +100,82 @@ while True:
         
         for name in all_names:
             clean_name = name.strip()
-            tw_now = tw_res.get(name, 0)
-            intl_now = intl_res.get(name, 0)
-            total_now = tw_now + intl_now # 這是 API 目前抓到的最新總數
+            # 這裡的 current_inv 是 API 抓到的最新剩餘庫存
+            curr_inv = current_inventory[name]
             
-            # 取得該成員目前的歷史紀錄 DataFrame
-            log_df = st.session_state.member_logs.get(name, pd.DataFrame())
+            # 從 session 或雲端取得上一次記錄的庫存量
+            log_df = st.session_state.member_logs.get(clean_name, pd.DataFrame())
             
-            # --- 核心邏輯：與 Google Sheet 的最後一筆「總銷量」對比 ---
-            last_total_in_sheet = 0
-            if not log_df.empty:
-                # 假設 log_df 是按時間降序排列，取第一列(最新的)總銷量
-                last_total_in_sheet = log_df.iloc[0]['總銷售量']
+            # 初始化：如果這是第一次執行，記下當前庫存但不算變動
+            if clean_name not in st.session_state.last_total_sales:
+                st.session_state.last_total_sales[clean_name] = curr_inv
+                continue
             
-            # 計算差額 (API 目前總量 - 雲端最後總量)
-            diff = total_now - last_total_in_sheet
+            prev_inv = st.session_state.last_total_sales[clean_name]
+            
+            # 計算銷量變動：如果庫存減少了，代表賣出了
+            # 變動量 = 舊庫存 - 新庫存
+            diff = prev_inv - curr_inv
             
             if diff > 0:
-                # 代表在你網頁關閉期間或現在，有新的銷量產生
-                # 我們把這個差額補進去
-                source = "補抓/變動" # 標註為變動偵測
+                # 取得目前總銷量累計 (從 Sheet 最後一列拿)
+                last_total_in_sheet = 0
+                if not log_df.empty:
+                    last_total_in_sheet = log_df.iloc[0]['總銷售量']
+                
+                new_total = last_total_in_sheet + diff
+                source = "官網訂單"
+                
                 if gc:
                     try:
                         wks = gc.worksheet(clean_name)
-                        # 寫入：時間, 增加張數, 來源, 寫入後的最新總銷量
-                        wks.append_row([now, int(diff), source, int(total_now)])
+                        wks.append_row([now, int(diff), source, int(new_total)])
                         
-                        # 更新本地顯示 (讓使用者立刻看到)
-                        new_entry = pd.DataFrame([{'時間': now, '張數': int(diff), '來源': source, '總銷售量': int(total_now)}])
-                        st.session_state.member_logs[name] = pd.concat([new_entry, log_df], ignore_index=True)
+                        # 更新本地顯示
+                        new_entry = pd.DataFrame([{'時間': now, '張數': int(diff), '來源': source, '總銷售量': int(new_total)}])
+                        st.session_state.member_logs[clean_name] = pd.concat([new_entry, log_df], ignore_index=True)
                         
-                        # 同步更新基準點，避免重複觸發
-                        st.session_state.last_tw_sales[name] = tw_now
-                        st.session_state.last_intl_sales[name] = intl_now
+                        # 更新基準點
+                        st.session_state.last_total_sales[clean_name] = curr_inv
                     except Exception as e:
-                        st.sidebar.error(f"寫入 {name} 失敗: {e}")
+                        st.sidebar.error(f"寫入 {clean_name} 失敗: {e}")
             
-            # 即使沒有 diff，也要確保基準點被初始化，避免其他邏輯衝突
-            if name not in st.session_state.last_tw_sales:
-                st.session_state.last_tw_sales[name] = tw_now
-                st.session_state.last_intl_sales[name] = intl_now
-
+            # 若庫存增加（補貨），則更新基準點但不計入銷量
+            elif diff < 0:
+                st.session_state.last_total_sales[clean_name] = curr_inv
 
         # --- 5. 畫面渲染 ---
         with status_placeholder.container():
-            st.write("### 👥 雙版合算總統計")
+            st.write(f"最後更新時間: {now} (每 15 秒自動刷新)")
+            
+            # 彙總表格
             summary = []
             for n in all_names:
-                tw = tw_res.get(n, 0)
-                intl = intl_res.get(n, 0)
-                summary.append({"成員名稱": n, "台灣版銷量": tw, "國際版銷量": intl, "總計": tw + intl})
-            st.table(pd.DataFrame(summary).sort_values("總計", ascending=False))
+                total_s = 0
+                m_df = st.session_state.member_logs.get(n, pd.DataFrame())
+                if not m_df.empty:
+                    total_s = m_df.iloc[0]['總銷售量']
+                
+                summary.append({
+                    "成員": n, 
+                    "目前剩餘庫存": current_inventory[n], 
+                    "累計銷量": total_s
+                })
+            
+            st.table(pd.DataFrame(summary).sort_values("累計銷量", ascending=False))
 
             st.divider()
             
+            # 分頁顯示明細
             tabs = st.tabs(all_names)
             for i, tab in enumerate(tabs):
                 m_name = all_names[i]
                 with tab:
                     log_df = st.session_state.member_logs.get(m_name, pd.DataFrame())
-                    cl, cr = st.columns(2)
-                    with cl:
-                        st.write("🕒 **銷售時間紀錄**")
-                        if not log_df.empty:
-                            st.dataframe(log_df[['時間', '張數', '來源']], use_container_width=True, hide_index=True)
-                    with cr:
-                        st.write("🏆 **單筆排行**")
-                        if not log_df.empty:
-                            rank_df = log_df[log_df['張數'] > 0].copy()
-                            if not rank_df.empty:
-                                rank_df = rank_df.sort_values("張數", ascending=False).reset_index(drop=True)
-                                rank_df.index = rank_df.index + 1
-                                rank_display = pd.DataFrame({
-                                    "排名": [f"第 {idx} 名" for idx in rank_df.index],
-                                    "單筆張數": rank_df['張數'].values,
-                                    "來源": rank_df['來源'].values
-                                })
-                                st.table(rank_display)
+                    if not log_df.empty:
+                        st.dataframe(log_df[['時間', '張數', '來源', '總銷售量']], use_container_width=True, hide_index=True)
+                    else:
+                        st.info("尚無銷售紀錄")
 
     time.sleep(15)
     st.rerun()
-
