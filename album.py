@@ -30,11 +30,11 @@ except Exception as e:
 # 2. 頁面設定
 # =========================
 st.set_page_config(page_title="tripleS Neptune 特別合照監控", layout="wide")
-st.title("🌌 tripleS 合照活動 in Taipei")
+st.title("🌌 tripleS Neptune SSS Summit in Asia 11 特別合照活動 in Taipei")
 
 TW_API = "https://www.kmonstar.com.tw/products/%E6%87%89%E5%8B%9F-260425-triples-neptune-sss-summit-in-asia-11-%E7%89%B9%E5%88%A5%E5%90%88%E7%85%A7%E6%B4%BB%E5%8B%95-in-taipei.json"
+INTL_API = "https://kmonstar.com/api/v1/event/detail/73b8ed0c-742e-4543-ba0c-4101b4ec6102"
 
-# 你這場的 6 位成員
 TARGET_MEMBERS = [
     "서연 SeoYeon",
     "나경 NaKyoung",
@@ -44,7 +44,18 @@ TARGET_MEMBERS = [
     "서아 SeoAh",
 ]
 
-# Google Sheet 統一欄位
+# 國際版名稱對應到台灣版名稱
+NAME_MAP = {
+    "SeoYeon": "서연 SeoYeon",
+    "NaKyoung": "나경 NaKyoung",
+    "DaHyun": "다현 DaHyun",
+    "Kotone": "코토네 Kotone",
+    "Nien": "니엔 Nien",
+    "SeoAh": "서아 SeoAh",
+    "Seo Ah": "서아 SeoAh",
+    "Na Kyoung": "나경 NaKyoung",
+}
+
 LOG_COLUMNS = ['時間', '張數', '來源', '總銷售量']
 
 # =========================
@@ -56,14 +67,19 @@ if 'member_logs' not in st.session_state:
 if 'last_totals' not in st.session_state:
     st.session_state.last_totals = {}
 
-if 'last_raw_sales' not in st.session_state:
-    st.session_state.last_raw_sales = {}
+if 'last_tw_totals' not in st.session_state:
+    st.session_state.last_tw_totals = {}
+
+if 'last_intl_totals' not in st.session_state:
+    st.session_state.last_intl_totals = {}
+
+if 'bootstrapped' not in st.session_state:
+    st.session_state.bootstrapped = False
 
 # =========================
 # 4. Google Sheet 同步
 # =========================
 def ensure_worksheet(name):
-    """確保每位成員都有自己的 worksheet，沒有就建立。"""
     if not gc:
         return None
 
@@ -79,7 +95,6 @@ def ensure_worksheet(name):
             return None
 
 def sync_from_cloud(names):
-    """從 Google Sheet 把現有資料同步到 session_state。"""
     if not gc:
         for name in names:
             if name not in st.session_state.member_logs:
@@ -100,7 +115,6 @@ def sync_from_cloud(names):
                     st.session_state.member_logs[name] = pd.DataFrame(columns=LOG_COLUMNS)
                     continue
 
-                # 若第一列不是正確標題，補上標題
                 if values[0] != LOG_COLUMNS:
                     wks.clear()
                     wks.append_row(LOG_COLUMNS)
@@ -115,7 +129,6 @@ def sync_from_cloud(names):
                 df['張數'] = pd.to_numeric(df['張數'], errors='coerce').fillna(0).astype(int)
                 df['總銷售量'] = pd.to_numeric(df['總銷售量'], errors='coerce').fillna(0).astype(int)
 
-                # 最新一筆放最上面
                 df = df.iloc[::-1].reset_index(drop=True)
                 st.session_state.member_logs[name] = df
 
@@ -124,9 +137,9 @@ def sync_from_cloud(names):
                 st.session_state.member_logs[name] = pd.DataFrame(columns=LOG_COLUMNS)
 
 # =========================
-# 5. 抓 API
+# 5. API 抓取
 # =========================
-def get_tw_data():
+def get_tw_data(session):
     tw_data = {}
 
     headers = {
@@ -136,7 +149,7 @@ def get_tw_data():
     }
 
     try:
-        res = requests.get(
+        res = session.get(
             f"{TW_API}?t={int(time.time())}",
             headers=headers,
             timeout=10
@@ -148,20 +161,56 @@ def get_tw_data():
             name = (v.get("option1") or "").strip()
             if name in TARGET_MEMBERS:
                 inventory_qty = v.get("inventory_quantity", 0)
-
-                # 這站目前是用 inventory_quantity 反映銷售累積
-                # 常見情況是負數，所以用 abs() 轉成累積銷量
                 sold = abs(int(inventory_qty))
                 tw_data[name] = tw_data.get(name, 0) + sold
 
     except Exception as e:
         st.sidebar.error(f"台灣 API 抓取失敗: {e}")
 
-    # 確保 6 位都存在
     for member in TARGET_MEMBERS:
         tw_data.setdefault(member, 0)
 
     return tw_data
+
+def get_intl_data(session):
+    intl_data = {}
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://kmonstar.com/zh/eventproductdetail/73b8ed0c-742e-4543-ba0c-4101b4ec6102",
+        "Origin": "https://kmonstar.com",
+    }
+
+    try:
+        res = session.get(
+            f"{INTL_API}?t={int(time.time())}",
+            headers=headers,
+            timeout=10
+        )
+
+        if res.status_code == 200:
+            data = res.json()
+            options = data.get("data", {}).get("optionList", [])
+
+            for o in options:
+                raw_name = (o.get("optionName") or o.get("option_name") or "").strip()
+                sales = o.get("salesCount", o.get("sales_count", 0)) or 0
+
+                mapped_name = NAME_MAP.get(raw_name, raw_name)
+
+                if mapped_name in TARGET_MEMBERS:
+                    intl_data[mapped_name] = intl_data.get(mapped_name, 0) + int(sales)
+        else:
+            st.sidebar.warning(f"國際 API 回傳狀態碼: {res.status_code}")
+
+    except Exception as e:
+        st.sidebar.error(f"國際 API 抓取失敗: {e}")
+
+    for member in TARGET_MEMBERS:
+        intl_data.setdefault(member, 0)
+
+    return intl_data
 
 # =========================
 # 6. 寫入 Google Sheet
@@ -182,19 +231,26 @@ def append_sale_log(name, now_str, diff, source, total_now):
         return False
 
 # =========================
-# 7. 主監控
+# 7. 主流程
 # =========================
 status_placeholder = st.empty()
 
-tw_res = get_tw_data()
-all_names = sorted(TARGET_MEMBERS)
+session = requests.Session()
+
+tw_res = get_tw_data(session)
+intl_res = get_intl_data(session)
+
+all_names = TARGET_MEMBERS.copy()
 sync_from_cloud(all_names)
 
 tz = pytz.timezone('Asia/Taipei')
 now = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
 
 for name in all_names:
-    total_now = int(tw_res.get(name, 0))
+    tw_now = int(tw_res.get(name, 0))
+    intl_now = int(intl_res.get(name, 0))
+    total_now = tw_now + intl_now
+
     log_df = st.session_state.member_logs.get(name, pd.DataFrame(columns=LOG_COLUMNS))
 
     last_total_in_sheet = 0
@@ -206,9 +262,25 @@ for name in all_names:
 
     diff = total_now - last_total_in_sheet
 
-    # 只有增加時才寫入
+    # 第一次啟動且 sheet 為空時，不補舊單，只建立基準
+    if not st.session_state.bootstrapped and last_total_in_sheet == 0:
+        st.session_state.last_totals[name] = total_now
+        st.session_state.last_tw_totals[name] = tw_now
+        st.session_state.last_intl_totals[name] = intl_now
+        continue
+
     if diff > 0:
-        source = "tw"
+        source_parts = []
+        prev_tw = st.session_state.last_tw_totals.get(name, tw_now)
+        prev_intl = st.session_state.last_intl_totals.get(name, intl_now)
+
+        if tw_now > prev_tw:
+            source_parts.append(f"TW+{tw_now - prev_tw}")
+        if intl_now > prev_intl:
+            source_parts.append(f"INTL+{intl_now - prev_intl}")
+
+        source = " / ".join(source_parts) if source_parts else "合計變動"
+
         ok = append_sale_log(name, now, diff, source, total_now)
 
         if ok:
@@ -225,6 +297,10 @@ for name in all_names:
             )
 
     st.session_state.last_totals[name] = total_now
+    st.session_state.last_tw_totals[name] = tw_now
+    st.session_state.last_intl_totals[name] = intl_now
+
+st.session_state.bootstrapped = True
 
 # =========================
 # 8. 畫面顯示
@@ -234,13 +310,18 @@ with status_placeholder.container():
 
     summary = []
     for n in all_names:
-        total = int(tw_res.get(n, 0))
+        tw = int(tw_res.get(n, 0))
+        intl = int(intl_res.get(n, 0))
+        total = tw + intl
+
         summary.append({
             "成員名稱": n,
-            "總銷量": total
+            "台灣版": tw,
+            "國際版": intl,
+            "總計": total
         })
 
-    summary_df = pd.DataFrame(summary).sort_values("總銷量", ascending=False).reset_index(drop=True)
+    summary_df = pd.DataFrame(summary).sort_values("總計", ascending=False).reset_index(drop=True)
     st.table(summary_df)
 
     st.divider()
