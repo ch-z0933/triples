@@ -194,6 +194,7 @@ def get_intl_data(session):
 
         if res.status_code == 200:
             data = res.json()
+            st.write("INTL RAW JSON:", data)
             print("INTL json keys:", list(data.keys()))
             print("INTL data keys:", list(data.get("data", {}).keys()) if isinstance(data.get("data", {}), dict) else data.get("data"))
 
