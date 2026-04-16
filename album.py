@@ -249,6 +249,10 @@ session = requests.Session()
 tw_res = get_tw_data(session)
 intl_res = get_intl_data(session)
 
+# 🔥 加在這裡（就在 API 抓完後）
+st.write("==== DEBUG INTL ====")
+st.write(intl_res)
+
 all_names = TARGET_MEMBERS.copy()
 sync_from_cloud(all_names)
 
