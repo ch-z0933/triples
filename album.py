@@ -189,27 +189,36 @@ def get_intl_data(session):
             timeout=10
         )
 
+        print("INTL status:", res.status_code)
+        print("INTL text preview:", res.text[:500])
+
         if res.status_code == 200:
             data = res.json()
+            print("INTL json keys:", list(data.keys()))
+            print("INTL data keys:", list(data.get("data", {}).keys()) if isinstance(data.get("data", {}), dict) else data.get("data"))
+
             options = data.get("data", {}).get("optionList", [])
+            print("INTL optionList:", options)
 
             for o in options:
                 raw_name = (o.get("optionName") or o.get("option_name") or "").strip()
                 sales = o.get("salesCount", o.get("sales_count", 0)) or 0
+                print("raw_name =", raw_name, "sales =", sales)
 
                 mapped_name = NAME_MAP.get(raw_name, raw_name)
 
                 if mapped_name in TARGET_MEMBERS:
                     intl_data[mapped_name] = intl_data.get(mapped_name, 0) + int(sales)
         else:
-            st.sidebar.warning(f"國際 API 回傳狀態碼: {res.status_code}")
+            print("INTL failed status code:", res.status_code)
 
     except Exception as e:
-        st.sidebar.error(f"國際 API 抓取失敗: {e}")
+        print("INTL exception:", e)
 
     for member in TARGET_MEMBERS:
         intl_data.setdefault(member, 0)
 
+    print("INTL final parsed:", intl_data)
     return intl_data
 
 # =========================
