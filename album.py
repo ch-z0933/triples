@@ -234,6 +234,48 @@ def append_sale_log(name, now_str, diff, source, total_now):
         st.sidebar.error(f"寫入 {name} 失敗: {e}")
         return False
 
+def build_rank_df(log_df):
+    if log_df.empty:
+        return pd.DataFrame(columns=['張數', '來源'])
+
+    rank_df = log_df.copy()
+    rank_df['張數'] = pd.to_numeric(rank_df['張數'], errors='coerce').fillna(0).astype(int)
+
+    positives = rank_df[rank_df['張數'] > 0].copy()
+    negatives = rank_df[rank_df['張數'] < 0].copy()
+
+    if positives.empty:
+        return pd.DataFrame(columns=['張數', '來源'])
+
+    cancel_total = abs(negatives['張數'].sum())
+
+    positives = positives.sort_values("張數", ascending=False).reset_index(drop=True)
+
+    kept_rows = []
+    remaining_cancel = cancel_total
+
+    for _, row in positives.iterrows():
+        qty = int(row['張數'])
+
+        if remaining_cancel <= 0:
+            kept_rows.append(row.copy())
+            continue
+
+        if remaining_cancel >= qty:
+            remaining_cancel -= qty
+            # 這筆被完全沖銷，不保留
+        else:
+            new_row = row.copy()
+            new_row['張數'] = qty - remaining_cancel
+            remaining_cancel = 0
+            kept_rows.append(new_row)
+
+    if not kept_rows:
+        return pd.DataFrame(columns=['張數', '來源'])
+
+    final_rank_df = pd.DataFrame(kept_rows)
+    final_rank_df = final_rank_df.sort_values("張數", ascending=False).reset_index(drop=True)
+    return final_rank_df
 # =========================
 # 7. 主流程
 # =========================
@@ -273,40 +315,40 @@ for name in all_names:
         st.session_state.last_intl_totals[name] = intl_now
         continue
 
-if diff != 0:
-    source_parts = []
-    prev_tw = st.session_state.last_tw_totals.get(name, tw_now)
-    prev_intl = st.session_state.last_intl_totals.get(name, intl_now)
+    if diff != 0:
+        source_parts = []
+        prev_tw = st.session_state.last_tw_totals.get(name, tw_now)
+        prev_intl = st.session_state.last_intl_totals.get(name, intl_now)
 
-    tw_delta = tw_now - prev_tw
-    intl_delta = intl_now - prev_intl
+        tw_delta = tw_now - prev_tw
+        intl_delta = intl_now - prev_intl
 
-    if tw_delta > 0:
-        source_parts.append(f"TW+{tw_delta}")
-    elif tw_delta < 0:
-        source_parts.append(f"TW退{abs(tw_delta)}")
+        if tw_delta > 0:
+            source_parts.append(f"TW+{tw_delta}")
+        elif tw_delta < 0:
+            source_parts.append(f"TW退{abs(tw_delta)}")
 
-    if intl_delta > 0:
-        source_parts.append(f"INTL+{intl_delta}")
-    elif intl_delta < 0:
-        source_parts.append(f"INTL退{abs(intl_delta)}")
+        if intl_delta > 0:
+            source_parts.append(f"INTL+{intl_delta}")
+        elif intl_delta < 0:
+            source_parts.append(f"INTL退{abs(intl_delta)}")
 
-    source = " / ".join(source_parts) if source_parts else ("合計變動" if diff > 0 else "合計退單")
+        source = " / ".join(source_parts) if source_parts else ("合計變動" if diff > 0 else "合計退單")
 
-    ok = append_sale_log(name, now, diff, source, total_now)
+        ok = append_sale_log(name, now, diff, source, total_now)
 
-    if ok:
-        new_entry = pd.DataFrame([{
-            '時間': now,
-            '張數': int(diff),
-            '來源': source,
-            '總銷售量': int(total_now)
-        }])
+        if ok:
+            new_entry = pd.DataFrame([{
+                '時間': now,
+                '張數': int(diff),
+                '來源': source,
+                '總銷售量': int(total_now)
+            }])
 
-        st.session_state.member_logs[name] = pd.concat(
-            [new_entry, log_df],
-            ignore_index=True
-        )
+            st.session_state.member_logs[name] = pd.concat(
+                [new_entry, log_df],
+                ignore_index=True
+            )
 
     st.session_state.last_totals[name] = total_now
     st.session_state.last_tw_totals[name] = tw_now
@@ -341,6 +383,7 @@ with status_placeholder.container():
     tabs = st.tabs(all_names)
     for i, tab in enumerate(tabs):
         m_name = all_names[i]
+
         with tab:
             log_df = st.session_state.member_logs.get(m_name, pd.DataFrame(columns=LOG_COLUMNS))
 
@@ -351,62 +394,28 @@ with status_placeholder.container():
                 if not log_df.empty:
                     st.dataframe(
                         log_df[['時間', '張數', '來源']],
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True
                     )
                 else:
                     st.info("目前沒有紀錄")
 
-with cr:
-    st.write("🏆 **單筆排行**")
-    if not log_df.empty:
-        rank_df = log_df.copy()
-        rank_df['張數'] = pd.to_numeric(rank_df['張數'], errors='coerce').fillna(0).astype(int)
+            with cr:
+                st.write("🏆 **單筆排行**")
+                final_rank_df = build_rank_df(log_df)
 
-        # 先取出所有正數單
-        positives = rank_df[rank_df['張數'] > 0].copy()
-        positives = positives.sort_index().reset_index(drop=True)
+                if not final_rank_df.empty:
+                    final_rank_df = final_rank_df.reset_index(drop=True)
+                    final_rank_df.index = final_rank_df.index + 1
 
-        # 計算總退單量
-        cancel_total = abs(rank_df.loc[rank_df['張數'] < 0, '張數'].sum())
-
-        # 從最大單開始沖銷
-        positives = positives.sort_values("張數", ascending=False).reset_index(drop=True)
-
-        kept_rows = []
-        remaining_cancel = cancel_total
-
-        for _, row in positives.iterrows():
-            qty = int(row['張數'])
-
-            if remaining_cancel <= 0:
-                kept_rows.append(row)
-                continue
-
-            if remaining_cancel >= qty:
-                remaining_cancel -= qty
-                # 這筆被完全沖掉，不保留
-            else:
-                row = row.copy()
-                row['張數'] = qty - remaining_cancel
-                remaining_cancel = 0
-                kept_rows.append(row)
-
-        if kept_rows:
-            final_rank_df = pd.DataFrame(kept_rows)
-            final_rank_df = final_rank_df.sort_values("張數", ascending=False).reset_index(drop=True)
-            final_rank_df.index = final_rank_df.index + 1
-
-            rank_display = pd.DataFrame({
-                "排名": [f"第 {idx} 名" for idx in final_rank_df.index],
-                "單筆張數": final_rank_df['張數'].values,
-                "來源": final_rank_df['來源'].values
-            })
-            st.table(rank_display)
-        else:
-            st.info("目前沒有有效排行資料")
-    else:
-        st.info("目前沒有排行資料")
+                    rank_display = pd.DataFrame({
+                        "排名": [f"第 {idx} 名" for idx in final_rank_df.index],
+                        "單筆張數": final_rank_df['張數'].values,
+                        "來源": final_rank_df['來源'].values
+                    })
+                    st.table(rank_display)
+                else:
+                    st.info("目前沒有有效排行資料")
 
 st.caption(f"最後更新時間：{now}")
 time.sleep(15)
