@@ -241,40 +241,36 @@ def build_rank_df(log_df):
     rank_df = log_df.copy()
     rank_df['張數'] = pd.to_numeric(rank_df['張數'], errors='coerce').fillna(0).astype(int)
 
-    positives = rank_df[rank_df['張數'] > 0].copy()
-    negatives = rank_df[rank_df['張數'] < 0].copy()
+    # 正單與退單分開
+    positives = rank_df[rank_df['張數'] > 0].copy().reset_index(drop=True)
+    negatives = rank_df[rank_df['張數'] < 0].copy().reset_index(drop=True)
 
     if positives.empty:
         return pd.DataFrame(columns=['張數', '來源'])
 
-    cancel_total = abs(negatives['張數'].sum())
+    # 用 list[dict] 比較好逐筆刪除
+    kept_rows = positives.to_dict('records')
 
-    positives = positives.sort_values("張數", ascending=False).reset_index(drop=True)
+    # 每一筆退單，刪掉一筆「相同張數」的正單
+    for _, row in negatives.iterrows():
+        cancel_qty = abs(int(row['張數']))
 
-    kept_rows = []
-    remaining_cancel = cancel_total
+        match_idx = None
+        for i, pos in enumerate(kept_rows):
+            if int(pos['張數']) == cancel_qty:
+                match_idx = i
+                break
 
-    for _, row in positives.iterrows():
-        qty = int(row['張數'])
-
-        if remaining_cancel <= 0:
-            kept_rows.append(row.copy())
-            continue
-
-        if remaining_cancel >= qty:
-            remaining_cancel -= qty
-            # 這筆被完全沖銷，不保留
-        else:
-            new_row = row.copy()
-            new_row['張數'] = qty - remaining_cancel
-            remaining_cancel = 0
-            kept_rows.append(new_row)
+        if match_idx is not None:
+            kept_rows.pop(match_idx)
 
     if not kept_rows:
         return pd.DataFrame(columns=['張數', '來源'])
 
     final_rank_df = pd.DataFrame(kept_rows)
+    final_rank_df['張數'] = pd.to_numeric(final_rank_df['張數'], errors='coerce').fillna(0).astype(int)
     final_rank_df = final_rank_df.sort_values("張數", ascending=False).reset_index(drop=True)
+
     return final_rank_df
 # =========================
 # 7. 主流程
